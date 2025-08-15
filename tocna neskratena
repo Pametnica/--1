@@ -1,0 +1,222 @@
+rtrigPed(CLK:=i_btnPed_hw);
+rtrigEmerg(CLK:=i_btnEmerg_hw);
+rtrigOffc(CLK:=i_btnOffc_hw);
+IF rtrigPed.Q THEN
+    IF NOT bPedPressed THEN
+        IF NOT bPedGreen THEN
+            iPedCntLocal := iPedCntLocal + 1;
+        END_IF
+        bPedPressed := TRUE;
+    END_IF
+END_IF
+
+IF NOT i_btnPed_hw THEN
+    bPedPressed := FALSE;
+END_IF
+o_pedCount:=iPedCntLocal;
+
+CASE state OF
+// za vozila zeleno za peshaci crceno
+	E_PosStates.NormalStateWithoutPed:
+		UpdateLights(E_TrafficLightState.GreenVeh);
+		IF iPedCntLocal>=i_NumberOfPed THEN
+			NextState:=E_PosStates.NormalStateWithtPed;
+		END_IF
+		
+		IF rtrigEmerg.Q AND rtrigOffc.Q THEN
+			NextState:=E_PosStates.EmergState;
+		ELSIF rtrigEmerg.Q THEN
+			NextState:=E_PosStates.EmergState;
+		ELSIF rtrigOffc.Q THEN 
+			NextState:=E_PosStates.OffState;
+		END_IF
+// DO TUKA E SREDENO
+
+
+// peshaci 
+	E_PosStates.NormalStateWithtPed:
+		iPedCntLocal:=0;
+		tonVehDelay(IN:=TRUE,PT:=tDelayVeh);
+		// TUKA IMA OD NOVATA FUNKCIJA RABOTI
+		CountingB(refTimer := tonVehDelay,refTime := tDelayVeh,iSecRem=>o_RemSecVeh);
+		UpdateLights(E_TrafficLightState.GreenVeh);
+		IF  tVehRed<(tPedGreen + tDelayPed +T#1S) THEN
+			NextState:=E_PosStates.ErrorState;
+		END_IF
+		// vrakja tocno otkako kje pomine delay vremeto
+		
+		IF tonVehDelay.Q THEN // poentata na ova e da ne se pal crveno za vozila momentalno koga 
+			o_RemSecVeh:=0;// kje klikne posledniot peshak, tuku da pocheka malku
+			UpdateLights(E_TrafficLightState.RedVeh);
+			tonPedDelay(IN:=TRUE,PT:=tDelayPed); // da se odolgovleci ova
+			tonVehRed(IN:=TRUE,PT:=tVehRed);
+			
+
+			// tuka se odbrojuva nanazad ushte kolku sekundi e crveno
+			CountingB(refTimer := tonVehRed,tVehRed,iSecRem=>o_RemSecVeh); // odbrojuva crveno za koli
+			// otkako e vekje crveno za koli da se pshti tajmerot koga e crveno i za peshaci i za vozila
+		END_IF
+		
+		// sega da vidima dali isteklo vremeto za bezbednost koe treba da pomine za pehacko zeleno
+		
+		IF tonPedDelay.Q AND NOT tonVehRed.Q THEN
+			UpdateLights(E_TrafficLightState.GreenPed);
+			tonPedGreen(IN:=TRUE,PT:=tPedGreen);
+			
+			//tuka ima izlez od funkijata COUNTINGB
+			CountingB(refTimer:=tonPedGreen,refTime:=tPedGreen,iSecRem=>o_RemSecPed);
+			bPedGreen:=TRUE;
+		END_IF
+		
+		IF tonPedGreen.Q THEN
+			o_RemSecPed:=0;
+			UpdateLights(E_TrafficLightState.RedPedV);
+			bPedGreen:=FALSE;
+		END_IF
+        
+		IF tonVehRed.Q AND NOT (rtrigEmerg.Q OR rtrigOffc.Q) THEN
+			UpdateLights(E_TrafficLightState.YellowVeh);
+			 tonVenYellow(IN:=TRUE,PT:=tVehYellow);
+			 
+			 // COUNTINGB
+			CountingB(refTimer:=tonVenYellow,refTime:=tVehYellow,iSecRem=>o_RemSecVeh);
+			 iPedCntLocal:=0;
+		ELSIF rtrigEmerg.Q AND rtrigOffc.Q THEN
+			NextState:=E_PosStates.EmergState;
+		ELSIF rtrigEmerg.Q THEN
+			NextState:=E_PosStates.EmergState;
+		ELSIF rtrigOffc.Q THEN 
+			NextState:=E_PosStates.OffState;
+		END_IF
+		
+		IF tonVenYellow.Q THEN
+			IF rtrigEmerg.Q AND rtrigOffc.Q THEN
+				NextState:=E_PosStates.EmergState;
+			ELSIF rtrigEmerg.Q THEN
+				NextState:=E_PosStates.OffState;
+			ELSIF rtrigOffc.Q THEN 
+				NextState:=E_PosStates.EmergState;
+			ELSE
+				NextState:=E_PosStates.NormalStateWithoutPed;
+			END_IF
+		END_IF
+		
+		
+		
+// itna situacija
+	E_PosStates.EmergState:
+		IF bPedGreen=TRUE THEN
+			tonPedDelay(IN:=TRUE,PT:=T#2S); // 2 sekundi da poceka da pominat pesa=hacite
+			
+			// TUKA IMA OD COUNTNG B 
+			CountingB(refTimer:=tonPedDelay,refTime:=T#2S,iSecRem=>o_RemSecPed);
+		END_IF
+		
+		IF bPedGreen=FALSE OR tonPedDelay.Q THEN
+			UpdateLights(E_TrafficLightState.GreenVeh);
+			tonEmerg(IN:=TRUE,PT:=tEmegrON);
+			
+			// TUKA IMA OD NOVATA FUNKCIJA RABOTI
+			CountingB(refTimer:=tonEmerg,refTime:=tEmegrON,iSecRem=>o_RemSecVeh);
+		END_IF
+		
+		IF tonEmerg.Q THEN
+			IF i_btnOffc_hw THEN
+				NextState:=E_PosStates.OffState;
+			END_IF
+			
+			IF iPedCntLocal>=i_NumberOfPed THEN
+				NextState:=E_PosStates.NormalStateWithtPed;
+			ELSIF iPedCntLocal<i_NumberOfPed THEN
+				NextState:=E_PosStates.NormalStateWithoutPed;
+			END_IF
+			
+			
+		END_IF
+		
+// za funkcioneri
+	E_PosStates.OffState:
+	
+		IF i_btnEmerg_hw THEN
+			NextState:=E_PosStates.EmergState;
+		END_IF
+		
+		IF bPedGreen=TRUE AND NOT i_btnEmerg_hw THEN
+			tonPedDelay(IN:=TRUE,PT:=T#2S);
+			
+
+		// TUKA IMA OD NOVATA FUNKCIJA RABOTI
+			CountingB(refTimer:=tonPedDelay,refTime:=T#2S,iSecRem=>o_RemSecVeh);
+			
+			
+		END_IF
+		
+		
+		IF bPedGreen=FALSE OR tonPedDelay.Q AND NOT i_btnEmerg_hw THEN
+			UpdateLights(E_TrafficLightState.YellowVeh);
+			tonOffc(IN:=TRUE,PT:=tOffOn);
+			
+			// TUKA IMA RABOTI OD NOVATA FUNKCIJA
+			CountingB(refTimer:=tonOffc,refTime:=tOffOn,iSecRem=>o_RemSecVeh);
+		END_IF
+		
+		IF tonOffc.Q THEN
+			IF iPedCntLocal>=i_NumberOfPed THEN
+				NextState:=E_PosStates.NormalStateWithtPed;
+			ELSIF iPedCntLocal<i_NumberOfPed THEN
+				NextState:=E_PosStates.NormalStateWithoutPed;
+			END_IF
+		END_IF
+		
+		IF i_btnRest THEN
+			NextState:=E_PosStates.SleepState;
+		END_IF
+	
+	E_PosStates.SleepState:
+		UpdateLights(E_TrafficLightState.Sleep);
+		
+		// TUKA IMA OD NOVATA FUNKCIJA
+		tonResetTime(IN:=TRUE,PT:=T#3S);
+		CountingB(refTimer:=tonResetTime,refTime:=T#3S,iSecRem=>o_RemSecVeh);
+		CountingB(refTimer:=tonResetTime,refTime:=T#3S,iSecRem=>o_RemSecPed);
+		tVehRed :=(tPedGreen + tDelayPed + T#2s);
+		
+		IF tonResetTime.Q THEN
+			ResetTimers();
+			IF i_btnEmerg_hw THEN
+				NextState:=E_PosStates.EmergState;
+			ELSIF i_btnOffc_hw THEN
+				NextState:=E_PosStates.OffState;
+			ELSIF iPedCntLocal>=i_NumberOfPed THEN
+				NextState:=E_PosStates.NormalStateWithtPed;
+			ELSE
+				NextState:=E_PosStates.NormalStateWithoutPed;
+			END_IF
+		END_IF
+END_CASE
+IF state <> E_PosStates.ErrorState THEN
+    IF tVehRed < (tPedGreen + tDelayPed + T#1S) THEN
+        NextState := E_PosStates.ErrorState;
+    END_IF
+END_IF
+
+
+IF NextState<>state THEN
+	ResetTimers();
+	o_RemSecVeh:=0;
+	o_RemSecPed:=0;
+	state:=NextState;
+END_IF
+
+IF state=E_PosStates.NormalStateWithoutPed OR state=E_PosStates.EmergState THEN
+	o_vehStateEnum:=E_TrafficLightStateVeh.GREEN;
+ELSIF state=E_PosStates.NormalStateWithtPed THEN
+	o_vehStateEnum:=E_TrafficLightStateVeh.RED;
+ELSIF state=E_PosStates.OffState THEN
+	o_vehStateEnum:=E_TrafficLightStateVeh.YELLOW;
+ELSIF state=E_PosStates.ErrorState OR state=E_PosStates.SleepState THEN
+	o_vehStateEnum:=E_TrafficLightStateVeh.ERROR;
+END_IF
+
+
+o_pedCount:=iPedCntLocal;
